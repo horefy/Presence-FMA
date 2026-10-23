@@ -1,0 +1,1032 @@
+// ---------------------------------------------------------------------------
+// Application de gestion des presences et du personnel
+// Schema Prisma -> MySQL (XAMPP / MariaDB 10.4+)
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider      = "prisma-client-js"
+  // "native" pour le poste de developpement, "rhel-openssl-3.0.x" pour Vercel.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------- ENUMS -------------------------------------
+
+enum EstablishmentType {
+  SCHOOL
+  TRAINING_CENTER
+}
+
+enum AcademicYearStatus {
+  PLANNED
+  ACTIVE
+  CLOSED
+}
+
+enum TermType {
+  TERM
+  SEMESTER
+  SESSION
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  LOCKED
+  PENDING
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum StaffStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  RETIRED
+}
+
+enum StaffPositionCategory {
+  TEACHING
+  ADMINISTRATION
+  TECHNICAL
+  MANAGEMENT
+}
+
+enum ContractType {
+  PERMANENT
+  TEMPORARY
+  CONSULTANT
+  INTERN
+}
+
+enum ContractStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  TERMINATED
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum StaffAttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  HALF_DAY
+  ON_LEAVE
+  REMOTE
+  HOLIDAY
+}
+
+enum LearnerStatus {
+  ACTIVE
+  INACTIVE
+  GRADUATED
+  SUSPENDED
+}
+
+enum ClassGroupStatus {
+  ACTIVE
+  INACTIVE
+  CLOSED
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  TRANSFERRED
+  CANCELLED
+}
+
+enum RoomType {
+  CLASSROOM
+  LAB
+  HALL
+  OFFICE
+  OTHER
+}
+
+enum RoomStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+enum SessionStatus {
+  PLANNED
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+enum LearnerAttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+  LEFT_EARLY
+}
+
+enum AttendanceType {
+  LEARNER
+  STAFF
+}
+
+enum CorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum JustificationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum HolidayType {
+  PUBLIC
+  ESTABLISHMENT
+  EXCEPTIONAL
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum SettingValueType {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+}
+
+// ------------------------------ 1. ORGANISATION -----------------------------
+
+model Establishment {
+  id        String            @id @default(cuid())
+  code      String            @unique @db.VarChar(50)
+  name      String            @db.VarChar(191)
+  type      EstablishmentType @default(SCHOOL)
+  address   String?           @db.Text
+  city      String?           @db.VarChar(100)
+  country   String?           @db.VarChar(100)
+  phone     String?           @db.VarChar(30)
+  email     String?           @db.VarChar(191)
+  timezone  String            @default("Africa/Antananarivo") @db.VarChar(64)
+  status    String            @default("ACTIVE") @db.VarChar(30)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  academicYears    AcademicYear[]
+  departments      Department[]
+  users            User[]
+  staff            Staff[]
+  learners         Learner[]
+  levels           Level[]
+  programs         Program[]
+  classGroups      ClassGroup[]
+  subjects         Subject[]
+  rooms            Room[]
+  leaveTypes       LeaveType[]
+  workSchedules    WorkSchedule[]
+  holidays         Holiday[]
+  sessions         Session[]
+  userRoles        UserRole[]
+  auditLogs        AuditLog[]
+  systemSettings   SystemSetting[]
+  staffAssignments StaffAssignment[]
+  staffAttendances StaffAttendance[]
+
+  @@index([name])
+  @@map("establishments")
+}
+
+model AcademicYear {
+  id              String             @id @default(cuid())
+  establishmentId String
+  label           String             @db.VarChar(50)
+  startDate       DateTime
+  endDate         DateTime
+  status          AcademicYearStatus @default(PLANNED)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
+  terms         Term[]
+  classGroups   ClassGroup[]
+  enrollments   Enrollment[]
+
+  @@unique([establishmentId, label])
+  @@index([status])
+  @@map("academic_years")
+}
+
+model Term {
+  id             String   @id @default(cuid())
+  academicYearId String
+  name           String   @db.VarChar(100)
+  type           TermType @default(TERM)
+  startDate      DateTime
+  endDate        DateTime
+  sequence       Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  @@unique([academicYearId, name])
+  @@index([academicYearId, sequence])
+  @@map("terms")
+}
+
+model Department {
+  id              String   @id @default(cuid())
+  establishmentId String
+  name            String   @db.VarChar(150)
+  code            String   @db.VarChar(50)
+  description     String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  establishment Establishment     @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  assignments   StaffAssignment[]
+
+  @@unique([establishmentId, code])
+  @@index([name])
+  @@map("departments")
+}
+
+// --------------------------- 2. COMPTES ET SECURITE -------------------------
+
+model User {
+  id              String     @id @default(cuid())
+  establishmentId String?
+  username        String     @unique @db.VarChar(100)
+  email           String     @unique @db.VarChar(191)
+  passwordHash    String     @db.VarChar(191)
+  firstName       String     @db.VarChar(100)
+  lastName        String     @db.VarChar(100)
+  phone           String?    @db.VarChar(30)
+  avatarUrl       String?    @db.VarChar(255)
+  language        String     @default("fr") @db.VarChar(10)
+  timezone        String     @default("Africa/Antananarivo") @db.VarChar(64)
+  status          UserStatus @default(ACTIVE)
+  lastLoginAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  establishment             Establishment?           @relation(fields: [establishmentId], references: [id], onDelete: SetNull)
+  userRoles                 UserRole[]
+  refreshTokens             RefreshToken[]
+  auditLogs                 AuditLog[]
+  notifications             Notification[]
+  notificationPreferences   NotificationPreference[]
+  staffProfile              Staff?
+  markedAttendances         LearnerAttendance[]      @relation("MarkedBy")
+  validatedAttendances      LearnerAttendance[]      @relation("ValidatedBy")
+  recordedStaffAttendances  StaffAttendance[]        @relation("RecordedBy")
+  validatedStaffAttendances StaffAttendance[]        @relation("ValidatedBy")
+  approvedLeaves            StaffLeave[]             @relation("ApprovedBy")
+  requestedCorrections      AttendanceCorrection[]   @relation("CorrectionRequester")
+  reviewedCorrections       AttendanceCorrection[]   @relation("CorrectionReviewer")
+  reviewedJustifications    AbsenceJustification[]   @relation("JustificationReviewer")
+  submittedJustifications   AbsenceJustification[]   @relation("JustificationSubmittedBy")
+
+  @@index([establishmentId])
+  @@index([status])
+  @@map("users")
+}
+
+model Role {
+  id           String   @id @default(cuid())
+  name         String   @db.VarChar(100)
+  code         String   @unique @db.VarChar(50)
+  description  String?  @db.Text
+  isSystemRole Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id        String   @id @default(cuid())
+  code      String   @unique @db.VarChar(100)
+  name      String   @db.VarChar(150)
+  resource  String   @db.VarChar(50)
+  action    String   @db.VarChar(30)
+  createdAt DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@index([resource])
+  @@map("permissions")
+}
+
+model UserRole {
+  id              String   @id @default(cuid())
+  userId          String
+  roleId          String
+  establishmentId String?
+  assignedAt      DateTime @default(now())
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role          Role           @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  establishment Establishment? @relation(fields: [establishmentId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, roleId, establishmentId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id           String   @id @default(cuid())
+  roleId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@map("role_permissions")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique @db.VarChar(191)
+  expiresAt DateTime
+  revokedAt DateTime?
+  ipAddress String?   @db.VarChar(45)
+  userAgent String?   @db.VarChar(255)
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id              String   @id @default(cuid())
+  userId          String?
+  establishmentId String?
+  action          String   @db.VarChar(50)
+  entityType      String   @db.VarChar(50)
+  entityId        String?  @db.VarChar(64)
+  oldValues       Json?
+  newValues       Json?
+  ipAddress       String?  @db.VarChar(45)
+  userAgent       String?  @db.VarChar(255)
+  createdAt       DateTime @default(now())
+
+  user          User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  establishment Establishment? @relation(fields: [establishmentId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// -------------------------------- 3. PERSONNEL ------------------------------
+
+model Staff {
+  id              String      @id @default(cuid())
+  userId          String?     @unique
+  establishmentId String
+  employeeNumber  String      @unique @db.VarChar(50)
+  firstName       String      @db.VarChar(100)
+  lastName        String      @db.VarChar(100)
+  gender          Gender?
+  birthDate       DateTime?
+  nationalId      String?     @db.VarChar(50)
+  email           String?     @db.VarChar(191)
+  phone           String?     @db.VarChar(30)
+  address         String?     @db.Text
+  hireDate        DateTime?
+  endDate         DateTime?
+  status          StaffStatus @default(ACTIVE)
+  photoUrl        String?     @db.VarChar(255)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user             User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  establishment    Establishment       @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  assignments      StaffAssignment[]
+  contracts        Contract[]
+  leaves           StaffLeave[]
+  workSchedules    StaffWorkSchedule[]
+  attendances      StaffAttendance[]
+  classSubjects    ClassSubject[]
+  timetableEntries TimetableEntry[]
+  sessions         Session[]
+
+  @@index([establishmentId, status])
+  @@index([lastName])
+  @@map("staff")
+}
+
+model StaffPosition {
+  id          String                @id @default(cuid())
+  name        String                @db.VarChar(100)
+  code        String                @unique @db.VarChar(50)
+  category    StaffPositionCategory @default(TEACHING)
+  description String?               @db.Text
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  assignments StaffAssignment[]
+
+  @@map("staff_positions")
+}
+
+model StaffAssignment {
+  id              String    @id @default(cuid())
+  staffId         String
+  departmentId    String?
+  positionId      String
+  establishmentId String
+  startDate       DateTime
+  endDate         DateTime?
+  isPrimary       Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  staff         Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  department    Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  position      StaffPosition @relation(fields: [positionId], references: [id], onDelete: Restrict)
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+  @@index([establishmentId])
+  @@map("staff_assignments")
+}
+
+model Contract {
+  id             String         @id @default(cuid())
+  staffId        String
+  contractNumber String         @unique @db.VarChar(50)
+  type           ContractType   @default(PERMANENT)
+  startDate      DateTime
+  endDate        DateTime?
+  status         ContractStatus @default(ACTIVE)
+  documentUrl    String?        @db.VarChar(255)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+  @@map("contracts")
+}
+
+model LeaveType {
+  id               String   @id @default(cuid())
+  establishmentId  String
+  name             String   @db.VarChar(100)
+  code             String   @db.VarChar(50)
+  requiresDocument Boolean  @default(false)
+  maxDaysPerYear   Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  leaves        StaffLeave[]
+
+  @@unique([establishmentId, code])
+  @@map("leave_types")
+}
+
+model StaffLeave {
+  id              String      @id @default(cuid())
+  staffId         String
+  leaveTypeId     String
+  startDate       DateTime
+  endDate         DateTime
+  numberOfDays    Int         @default(1)
+  reason          String?     @db.Text
+  status          LeaveStatus @default(PENDING)
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectionReason String?     @db.Text
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  staff     Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  approver  User?     @relation("ApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
+
+  @@index([staffId, status])
+  @@map("staff_leaves")
+}
+
+model WorkSchedule {
+  id              String   @id @default(cuid())
+  establishmentId String
+  name            String   @db.VarChar(100)
+  startTime       String   @db.VarChar(8)
+  endTime         String   @db.VarChar(8)
+  breakDuration   Int      @default(0)
+  applicableDays  Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  establishment  Establishment       @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  staffSchedules StaffWorkSchedule[]
+
+  @@unique([establishmentId, name])
+  @@map("work_schedules")
+}
+
+model StaffWorkSchedule {
+  id             String    @id @default(cuid())
+  staffId        String
+  workScheduleId String
+  effectiveFrom  DateTime
+  effectiveTo    DateTime?
+  createdAt      DateTime  @default(now())
+
+  staff        Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  workSchedule WorkSchedule @relation(fields: [workScheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, workScheduleId, effectiveFrom])
+  @@map("staff_work_schedules")
+}
+
+model StaffAttendance {
+  id              String                @id @default(cuid())
+  staffId         String
+  establishmentId String
+  attendanceDate  DateTime
+  checkInAt       DateTime?
+  checkOutAt      DateTime?
+  status          StaffAttendanceStatus @default(PRESENT)
+  lateMinutes     Int                   @default(0)
+  absenceReason   String?               @db.Text
+  recordedBy      String?
+  validatedBy     String?
+  validatedAt     DateTime?
+  notes           String?               @db.Text
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  staff         Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  recorder      User?         @relation("RecordedBy", fields: [recordedBy], references: [id], onDelete: SetNull)
+  validator     User?         @relation("ValidatedBy", fields: [validatedBy], references: [id], onDelete: SetNull)
+
+  @@unique([staffId, attendanceDate])
+  @@index([attendanceDate, status])
+  @@index([establishmentId])
+  @@map("staff_attendances")
+}
+
+// -------------------------------- 4. APPRENANTS -----------------------------
+
+model Learner {
+  id                 String        @id @default(cuid())
+  establishmentId    String
+  registrationNumber String        @unique @db.VarChar(50)
+  firstName          String        @db.VarChar(100)
+  lastName           String        @db.VarChar(100)
+  gender             Gender?
+  birthDate          DateTime?
+  email              String?       @db.VarChar(191)
+  phone              String?       @db.VarChar(30)
+  address            String?       @db.Text
+  photoUrl           String?       @db.VarChar(255)
+  status             LearnerStatus @default(ACTIVE)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  establishment  Establishment          @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  guardians      LearnerGuardian[]
+  enrollments    Enrollment[]
+  attendances    LearnerAttendance[]
+  justifications AbsenceJustification[]
+
+  @@index([establishmentId, status])
+  @@index([lastName])
+  @@map("learners")
+}
+
+model Guardian {
+  id         String   @id @default(cuid())
+  firstName  String   @db.VarChar(100)
+  lastName   String   @db.VarChar(100)
+  email      String?  @db.VarChar(191)
+  phone      String?  @db.VarChar(30)
+  address    String?  @db.Text
+  occupation String?  @db.VarChar(100)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  learners LearnerGuardian[]
+
+  @@index([lastName])
+  @@map("guardians")
+}
+
+model LearnerGuardian {
+  id                    String   @id @default(cuid())
+  learnerId             String
+  guardianId            String
+  relationship          String   @db.VarChar(50)
+  isPrimary             Boolean  @default(false)
+  receivesNotifications Boolean  @default(true)
+  createdAt             DateTime @default(now())
+
+  learner  Learner  @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  guardian Guardian @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+
+  @@unique([learnerId, guardianId])
+  @@map("learner_guardians")
+}
+
+model Level {
+  id              String   @id @default(cuid())
+  establishmentId String
+  name            String   @db.VarChar(100)
+  code            String   @db.VarChar(50)
+  sequence        Int      @default(1)
+  description     String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  classGroups   ClassGroup[]
+
+  @@unique([establishmentId, code])
+  @@map("levels")
+}
+
+model Program {
+  id               String   @id @default(cuid())
+  establishmentId  String
+  name             String   @db.VarChar(150)
+  code             String   @db.VarChar(50)
+  description      String?  @db.Text
+  durationInMonths Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  classGroups   ClassGroup[]
+
+  @@unique([establishmentId, code])
+  @@map("programs")
+}
+
+model ClassGroup {
+  id              String           @id @default(cuid())
+  establishmentId String
+  academicYearId  String
+  levelId         String
+  programId       String
+  name            String           @db.VarChar(100)
+  code            String           @db.VarChar(50)
+  capacity        Int              @default(30)
+  room            String?          @db.VarChar(50)
+  status          ClassGroupStatus @default(ACTIVE)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  establishment    Establishment    @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  academicYear     AcademicYear     @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  level            Level            @relation(fields: [levelId], references: [id], onDelete: Restrict)
+  program          Program          @relation(fields: [programId], references: [id], onDelete: Restrict)
+  enrollments      Enrollment[]
+  classSubjects    ClassSubject[]
+  timetableEntries TimetableEntry[]
+  sessions         Session[]
+
+  @@unique([establishmentId, code])
+  @@index([academicYearId])
+  @@map("class_groups")
+}
+
+model Enrollment {
+  id               String           @id @default(cuid())
+  learnerId        String
+  classGroupId     String
+  academicYearId   String
+  enrollmentNumber String           @unique @db.VarChar(50)
+  enrollmentDate   DateTime         @default(now())
+  startDate        DateTime
+  endDate          DateTime?
+  status           EnrollmentStatus @default(ACTIVE)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  learner      Learner      @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  classGroup   ClassGroup   @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+
+  @@unique([learnerId, classGroupId, academicYearId])
+  @@index([classGroupId])
+  @@map("enrollments")
+}
+
+// ------------------------- 5. PEDAGOGIE ET EMPLOI DU TEMPS ------------------
+
+model Subject {
+  id              String   @id @default(cuid())
+  establishmentId String
+  name            String   @db.VarChar(150)
+  code            String   @db.VarChar(50)
+  coefficient     Int      @default(1)
+  durationInHours Int      @default(0)
+  description     String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  establishment    Establishment    @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  classSubjects    ClassSubject[]
+  timetableEntries TimetableEntry[]
+  sessions         Session[]
+
+  @@unique([establishmentId, code])
+  @@map("subjects")
+}
+
+model ClassSubject {
+  id           String @id @default(cuid())
+  classGroupId String
+  subjectId    String
+  teacherId    String
+  weeklyHours  Float  @default(0)
+
+  classGroup ClassGroup @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
+  subject    Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacher    Staff      @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+
+  @@unique([classGroupId, subjectId])
+  @@index([teacherId])
+  @@map("class_subjects")
+}
+
+model Room {
+  id              String     @id @default(cuid())
+  establishmentId String
+  name            String     @db.VarChar(100)
+  code            String     @db.VarChar(50)
+  capacity        Int        @default(30)
+  type            RoomType   @default(CLASSROOM)
+  status          RoomStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  establishment    Establishment    @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  timetableEntries TimetableEntry[]
+  sessions         Session[]
+
+  @@unique([establishmentId, code])
+  @@map("rooms")
+}
+
+model TimetableEntry {
+  id            String    @id @default(cuid())
+  classGroupId  String
+  subjectId     String
+  teacherId     String
+  roomId        String?
+  dayOfWeek     Int       @default(1)
+  startTime     String    @db.VarChar(8)
+  endTime       String    @db.VarChar(8)
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  classGroup ClassGroup @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
+  subject    Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacher    Staff      @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  room       Room?      @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  sessions   Session[]
+
+  @@index([classGroupId, dayOfWeek])
+  @@index([teacherId])
+  @@map("timetable_entries")
+}
+
+model Session {
+  id               String        @id @default(cuid())
+  establishmentId  String
+  classGroupId     String
+  subjectId        String
+  teacherId        String
+  roomId           String?
+  timetableEntryId String?
+  sessionDate      DateTime
+  startTime        String        @db.VarChar(8)
+  endTime          String        @db.VarChar(8)
+  status           SessionStatus @default(PLANNED)
+  openedAt         DateTime?
+  closedAt         DateTime?
+  notes            String?       @db.Text
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  establishment  Establishment       @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  classGroup     ClassGroup          @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
+  subject        Subject             @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacher        Staff               @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  room           Room?               @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  timetableEntry TimetableEntry?     @relation(fields: [timetableEntryId], references: [id], onDelete: SetNull)
+  attendances    LearnerAttendance[]
+
+  @@index([sessionDate])
+  @@index([classGroupId, sessionDate])
+  @@index([status])
+  @@map("sessions")
+}
+
+// ---------------------- 6. PRESENCES DES APPRENANTS -------------------------
+
+model LearnerAttendance {
+  id            String                  @id @default(cuid())
+  sessionId     String
+  learnerId     String
+  status        LearnerAttendanceStatus @default(PRESENT)
+  arrivalTime   String?                 @db.VarChar(8)
+  departureTime String?                 @db.VarChar(8)
+  lateMinutes   Int                     @default(0)
+  comment       String?                 @db.Text
+  markedBy      String?
+  markedAt      DateTime?
+  validatedBy   String?
+  validatedAt   DateTime?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  learner   Learner @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  marker    User?   @relation("MarkedBy", fields: [markedBy], references: [id], onDelete: SetNull)
+  validator User?   @relation("ValidatedBy", fields: [validatedBy], references: [id], onDelete: SetNull)
+
+  @@unique([sessionId, learnerId])
+  @@index([learnerId, status])
+  @@map("learner_attendances")
+}
+
+model AttendanceCorrection {
+  id             String           @id @default(cuid())
+  attendanceType AttendanceType   @default(LEARNER)
+  attendanceId   String
+  requestedBy    String?
+  oldStatus      String           @db.VarChar(30)
+  newStatus      String           @db.VarChar(30)
+  reason         String           @db.Text
+  evidenceUrl    String?          @db.VarChar(255)
+  status         CorrectionStatus @default(PENDING)
+  reviewedBy     String?
+  reviewedAt     DateTime?
+  reviewComment  String?          @db.Text
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  requester User? @relation("CorrectionRequester", fields: [requestedBy], references: [id], onDelete: SetNull)
+  reviewer  User? @relation("CorrectionReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([attendanceType, attendanceId])
+  @@map("attendance_corrections")
+}
+
+model AbsenceJustification {
+  id            String              @id @default(cuid())
+  learnerId     String?
+  staffId       String?
+  attendanceId  String?
+  submittedBy   String
+  documentUrl   String              @db.VarChar(255)
+  reason        String              @db.Text
+  submittedAt   DateTime            @default(now())
+  status        JustificationStatus @default(PENDING)
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  reviewComment String?             @db.Text
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  learner   Learner? @relation(fields: [learnerId], references: [id], onDelete: SetNull)
+  submitter User     @relation("JustificationSubmittedBy", fields: [submittedBy], references: [id], onDelete: Restrict)
+  reviewer  User?    @relation("JustificationReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("absence_justifications")
+}
+
+model Holiday {
+  id              String      @id @default(cuid())
+  establishmentId String
+  name            String      @db.VarChar(150)
+  holidayDate     DateTime
+  type            HolidayType @default(PUBLIC)
+  description     String?     @db.Text
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@unique([establishmentId, holidayDate])
+  @@index([holidayDate])
+  @@map("holidays")
+}
+
+// ---------------------------- 7. ENTITES TRANSVERSALES ----------------------
+
+model Notification {
+  id        String              @id @default(cuid())
+  userId    String
+  type      String              @db.VarChar(50)
+  title     String              @db.VarChar(191)
+  message   String              @db.Text
+  channel   NotificationChannel @default(IN_APP)
+  readAt    DateTime?
+  sentAt    DateTime?
+  status    NotificationStatus  @default(PENDING)
+  createdAt DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id           String   @id @default(cuid())
+  userId       String
+  eventType    String   @db.VarChar(50)
+  inAppEnabled Boolean  @default(true)
+  emailEnabled Boolean  @default(false)
+  smsEnabled   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventType])
+  @@map("notification_preferences")
+}
+
+model FileAttachment {
+  id           String   @id @default(cuid())
+  uploadedBy   String?
+  originalName String   @db.VarChar(255)
+  storageName  String   @db.VarChar(255)
+  mimeType     String   @db.VarChar(100)
+  size         Int      @default(0)
+  storageUrl   String   @db.VarChar(255)
+  checksum     String?  @db.VarChar(64)
+  createdAt    DateTime @default(now())
+
+  @@index([originalName])
+  @@map("file_attachments")
+}
+
+model SystemSetting {
+  id              String           @id @default(cuid())
+  establishmentId String?
+  settingKey      String           @db.VarChar(100)
+  settingValue    String?          @db.Text
+  valueType       SettingValueType @default(STRING)
+  description     String?          @db.Text
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  establishment Establishment? @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@unique([establishmentId, settingKey])
+  @@map("system_settings")
+}
